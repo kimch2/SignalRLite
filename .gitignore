@@ -1,0 +1,12 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vs/
+.idea/
+*.user
+
+# Build output
+[Bb]in/
+[Oo]bj/

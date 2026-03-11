@@ -1,0 +1,26 @@
+{
+  "name": "com.mlgame.signalrlite",
+  "version": "1.0.0",
+  "displayName": "SignalR Lite",
+  "description": "A lightweight ASP.NET Core SignalR client for Unity, powered by UnityWebSocket. No heavy dependencies - only requires com.psygames.unitywebsocket.",
+  "unity": "2021.3",
+  "unityRelease": "45f2",
+  "license": "MIT",
+  "author": {
+    "name": "猫脸"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kimch2/SignalRLite.git"
+  },
+  "keywords": [
+    "signalr",
+    "websocket",
+    "realtime",
+    "networking",
+    "webgl"
+  ],
+  "dependencies": {
+    "com.psygames.unitywebsocket": "https://github.com/psygames/UnityWebSocket.git#upm"
+  }
+}
