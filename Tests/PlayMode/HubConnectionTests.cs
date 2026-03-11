@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using SignalRLite;
 using SignalRLite.Messages;
+using SignalRLite.Transport;
 using SignalRLite.Utility;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -76,6 +77,18 @@ namespace SignalRLite.Tests
     [TestFixture]
     public class HubConnectionStateTests
     {
+        // ── Helper ───────────────────────────────────────────────────────────
+
+        /// Creates a hub backed by MockWebSocketClient (no real network needed).
+        private static HubConnection CreateMockHub(bool skipNegotiation = true)
+            => new HubConnection("ws://localhost/hub", new HubOptions
+            {
+                SkipNegotiation    = skipNegotiation,
+                WebSocketFactory   = _ => new MockWebSocketClient(),
+            });
+
+        // ── Tests ─────────────────────────────────────────────────────────────
+
         [Test]
         public void InitialState_IsDisconnected()
         {
@@ -86,12 +99,7 @@ namespace SignalRLite.Tests
         [Test]
         public void StartConnect_ChangesStateToConnecting()
         {
-            var hub = new HubConnection("ws://localhost:5000/hub", new HubOptions
-            {
-                SkipNegotiation = true,
-            });
-
-            // StartConnect will try to open WS – state becomes Connecting immediately.
+            var hub = CreateMockHub();
             hub.StartConnect();
             Assert.AreEqual(HubConnectionState.Connecting, hub.State);
             hub.StartClose();
@@ -100,10 +108,7 @@ namespace SignalRLite.Tests
         [Test]
         public void StartClose_ResetsStateToDisconnected()
         {
-            var hub = new HubConnection("ws://localhost:5000/hub", new HubOptions
-            {
-                SkipNegotiation = true,
-            });
+            var hub = CreateMockHub();
             hub.StartConnect();
             hub.StartClose();
             Assert.AreEqual(HubConnectionState.Disconnected, hub.State);
@@ -112,13 +117,45 @@ namespace SignalRLite.Tests
         [Test]
         public void CallingStartConnect_Twice_IsIdempotent()
         {
-            var hub = new HubConnection("ws://localhost:5000/hub", new HubOptions
-            {
-                SkipNegotiation = true,
-            });
+            var hub = CreateMockHub();
             hub.StartConnect();
             hub.StartConnect(); // second call should be ignored
             Assert.AreEqual(HubConnectionState.Connecting, hub.State);
+            hub.StartClose();
+        }
+
+        [Test]
+        public void SimulateConnected_HubBecomesConnected()
+        {
+            MockWebSocketClient mock = null;
+            var hub = new HubConnection("ws://localhost/hub", new HubOptions
+            {
+                SkipNegotiation  = true,
+                WebSocketFactory = url => { mock = new MockWebSocketClient(); return mock; },
+            });
+
+            hub.StartConnect();
+            mock.SimulateConnected(); // SimulateOpen + SimulateHandshakeOk
+            Assert.AreEqual(HubConnectionState.Connected, hub.State);
+            hub.StartClose();
+        }
+
+        [Test]
+        public void SimulateClose_HubBecomesDisconnected()
+        {
+            MockWebSocketClient mock = null;
+            var hub = new HubConnection("ws://localhost/hub", new HubOptions
+            {
+                SkipNegotiation  = true,
+                WebSocketFactory = url => { mock = new MockWebSocketClient(); return mock; },
+            });
+
+            hub.StartConnect();
+            mock.SimulateConnected();
+            Assert.AreEqual(HubConnectionState.Connected, hub.State);
+
+            mock.SimulateClose("test closed");
+            Assert.AreEqual(HubConnectionState.Reconnecting, hub.State); // auto-reconnect kicks in
             hub.StartClose();
         }
     }
@@ -423,12 +460,16 @@ namespace SignalRLite.Tests
         [UnitySetUp]
         public IEnumerator SetUp()
         {
-            if (!ServerRunning) yield break;
+            if (!ServerRunning || SignalRLiteConfig.DefaultWebSocketFactory == null) yield break;
 
             _connected = false;
             _lastError = null;
 
-            _hub = new HubConnection(HubUrl, new HubOptions { SkipNegotiation = false });
+            _hub = new HubConnection(HubUrl, new HubOptions
+            {
+                SkipNegotiation  = false,
+                WebSocketFactory = SignalRLiteConfig.DefaultWebSocketFactory,
+            });
             _hub.OnConnected += _ => _connected = true;
             _hub.OnError     += (_, e) => _lastError = e;
             _hub.StartConnect();
@@ -449,9 +490,12 @@ namespace SignalRLite.Tests
         {
             if (!ServerRunning)
             {
-                Debug.Log("[Integration] ServerRunning=false – skipping. " +
-                          "Start the server with: dotnet run --project C:\\Projects\\mlgame\\SignalRTestServer");
                 Assert.Pass("Skipped – set ServerRunning=true to run integration tests");
+                return true;
+            }
+            if (SignalRLiteConfig.DefaultWebSocketFactory == null)
+            {
+                Assert.Pass("Skipped – add scripting define SIGNALRLITE_UNITYWSSOCKET to run integration tests");
                 return true;
             }
             if (_lastError != null) { Assert.Fail($"Connection error: {_lastError}"); return true; }

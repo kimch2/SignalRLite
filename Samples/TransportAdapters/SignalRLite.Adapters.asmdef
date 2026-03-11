@@ -1,0 +1,19 @@
+{
+    "name": "com.mlgame.signalrlite.adapters",
+    "rootNamespace": "SignalRLite.Adapters",
+    "references": [
+        "com.mlgame.signalrlite",
+        "UnityWebSocket.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "SIGNALRLITE_UNITYWSSOCKET"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

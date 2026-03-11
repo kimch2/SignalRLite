@@ -1,0 +1,26 @@
+{
+    "name": "com.mlgame.signalrlite.messagepack.tests",
+    "rootNamespace": "SignalRLite.Tests",
+    "references": [
+        "com.mlgame.signalrlite",
+        "com.mlgame.signalrlite.messagepack",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "SIGNALRLITE_MESSAGEPACK_CSHARP",
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

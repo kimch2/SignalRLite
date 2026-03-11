@@ -1,0 +1,19 @@
+{
+    "name": "com.mlgame.signalrlite.messagepack",
+    "rootNamespace": "SignalRLite.Encoders",
+    "references": [
+        "com.mlgame.signalrlite",
+        "MessagePack"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "SIGNALRLITE_MESSAGEPACK_CSHARP"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

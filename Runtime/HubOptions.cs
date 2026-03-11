@@ -1,6 +1,8 @@
 using System;
 using SignalRLite.Authentication;
 using SignalRLite.Encoders;
+using SignalRLite.Transport;
+
 
 namespace SignalRLite
 {
@@ -110,5 +112,23 @@ namespace SignalRLite
 
         /// <summary>Maximum number of negotiation redirects to follow. Default: 10.</summary>
         public int MaxRedirects { get; set; } = 10;
+
+        // ── Transport ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Factory that creates the <see cref="IWebSocketClient"/> for a given URL.
+        /// <para>
+        /// Must be assigned before calling <c>Connect()</c>. Enable the built-in adapter by
+        /// adding the scripting define <c>SIGNALRLITE_UNITYWSSOCKET</c> and setting:
+        /// <code>
+        /// WebSocketFactory = url => new UnityWebSocketAdapter(url)
+        /// </code>
+        /// </para>
+        /// <para>
+        /// For WeChat or Douyin mini-games, see the adapter samples in
+        /// <c>Samples/TransportAdapters/</c>.
+        /// </para>
+        /// </summary>
+        public Func<string, IWebSocketClient> WebSocketFactory { get; set; }
     }
 }

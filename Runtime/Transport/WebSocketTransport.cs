@@ -4,7 +4,6 @@ using SignalRLite.Encoders;
 using SignalRLite.Messages;
 using SignalRLite.Utility;
 using UnityEngine;
-using UnityWebSocket;
 
 namespace SignalRLite.Transport
 {
@@ -19,9 +18,10 @@ namespace SignalRLite.Transport
     }
 
     /// <summary>
-    /// WebSocket transport for SignalR Lite, backed by the psygames UnityWebSocket package.
+    /// WebSocket transport for SignalR Lite.
     /// Handles the SignalR handshake internally and forwards decoded messages upward.
-    /// Supports both JSON (text) and MessagePack (binary) protocols via <see cref="ISignalRProtocol"/>.
+    /// The underlying WebSocket connection is provided by an <see cref="IWebSocketClient"/>
+    /// created via the factory supplied in the constructor.
     /// </summary>
     internal class WebSocketTransport : IDisposable
     {
@@ -33,101 +33,125 @@ namespace SignalRLite.Transport
         public event Action<string>               OnDisconnected;
         public event Action<string>               OnError;
 
-        private IWebSocket        _ws;
+        private readonly Func<string, IWebSocketClient> _factory;
+        private IWebSocketClient  _ws;
         private ISignalRProtocol  _protocol;
         private bool              _handshakeDone;
 
+        public WebSocketTransport(Func<string, IWebSocketClient> factory)
+            => _factory = factory;
+
         // ── Public API ───────────────────────────────────────────────────────
 
-        /// <param name="url">WebSocket URL.</param>
-        /// <param name="protocol">Wire protocol (JSON or MessagePack).</param>
         public void Connect(string url, ISignalRProtocol protocol)
         {
+            var factory = _factory ?? SignalRLiteConfig.DefaultWebSocketFactory;
+            if (factory == null)
+                throw new InvalidOperationException(
+                    "[SignalRLite] No WebSocket factory is configured.\n" +
+                    "Option A – enable the built-in adapter:\n" +
+                    "  1. Add scripting define: SIGNALRLITE_UNITYWSSOCKET\n" +
+                    "  2. The factory is registered automatically at runtime.\n" +
+                    "Option B – supply your own adapter:\n" +
+                    "  hub.Options.WebSocketFactory = url => new MyAdapter(url);");
+
             _protocol      = protocol;
             State          = TransportState.Connecting;
             _handshakeDone = false;
 
-            _ws            = new WebSocket(url);
-            _ws.OnOpen    += HandleOpen;
-            _ws.OnMessage += HandleMessage;
-            _ws.OnClose   += HandleClose;
-            _ws.OnError   += HandleError;
-            _ws.ConnectAsync();
+            try
+            {
+                _ws = factory(url);
+            }
+            catch (Exception ex)
+            {
+                State       = TransportState.Failed;
+                ErrorReason = ex.Message;
+                OnError?.Invoke(ex.Message);
+                return;
+            }
+
+            _ws.OnOpen          += HandleOpen;
+            _ws.OnTextMessage   += HandleTextMessage;
+            _ws.OnBinaryMessage += HandleBinaryMessage;
+            _ws.OnClose         += HandleClose;
+            _ws.OnError         += HandleError;
+            _ws.Connect();
         }
 
         /// <summary>Send a text frame (JSON protocol).</summary>
         public void Send(string text)
         {
             if (_ws == null || State != TransportState.Connected) return;
-            _ws.SendAsync(text);
+            _ws.SendText(text);
         }
 
         /// <summary>Send a binary frame (MessagePack protocol).</summary>
         public void SendBytes(byte[] data)
         {
             if (_ws == null || State != TransportState.Connected) return;
-            _ws.SendAsync(data);
+            _ws.SendBinary(data);
         }
 
         public void Close()
         {
             if (_ws == null || State == TransportState.Closing || State == TransportState.Closed) return;
             State = TransportState.Closing;
-            _ws.CloseAsync();
+            _ws.Close();
         }
 
         public void Dispose()
         {
             if (_ws == null) return;
-            _ws.OnOpen    -= HandleOpen;
-            _ws.OnMessage -= HandleMessage;
-            _ws.OnClose   -= HandleClose;
-            _ws.OnError   -= HandleError;
-            _ws = null;
+            _ws.OnOpen          -= HandleOpen;
+            _ws.OnTextMessage   -= HandleTextMessage;
+            _ws.OnBinaryMessage -= HandleBinaryMessage;
+            _ws.OnClose         -= HandleClose;
+            _ws.OnError         -= HandleError;
+            _ws.Dispose();
+            _ws    = null;
+            State  = TransportState.Closed;
         }
 
-        // ── Private event handlers ───────────────────────────────────────────
+        // ── Event handlers ───────────────────────────────────────────────────
 
-        private void HandleOpen(object sender, OpenEventArgs e)
+        private void HandleOpen()
         {
-            // The handshake request is always a JSON text frame,
-            // regardless of the selected protocol.
-            _ws.SendAsync(_protocol.HandshakeRequest);
+            _ws.SendText(_protocol.HandshakeRequest);
         }
 
-        private void HandleMessage(object sender, MessageEventArgs e)
+        private void HandleTextMessage(string data)
+        {
+            if (!_handshakeDone) { HandleHandshake(data); return; }
+            if (!_protocol.IsBinary) DispatchText(data);
+        }
+
+        private void HandleBinaryMessage(byte[] data)
         {
             if (!_handshakeDone)
             {
-                // Handshake response is always a JSON text frame.
-                if (!e.IsText) return;
-                HandleHandshake(e.Data);
+                // ASP.NET Core SignalR sends the handshake response as a binary WebSocket frame
+                // when a binary protocol (e.g. MessagePack) was negotiated.
+                // The payload is still UTF-8 JSON: {}\x1e
+                HandleHandshake(System.Text.Encoding.UTF8.GetString(data));
                 return;
             }
-
-            if (_protocol.IsBinary)
-            {
-                if (e.IsBinary) DispatchBinary(e.RawData);
-            }
-            else
-            {
-                if (e.IsText) DispatchText(e.Data);
-            }
+            if (_protocol.IsBinary) DispatchBinary(data);
         }
 
-        private void HandleClose(object sender, CloseEventArgs e)
+        private void HandleClose(string reason)
         {
             State = TransportState.Closed;
-            OnDisconnected?.Invoke(e.Reason);
+            OnDisconnected?.Invoke(reason);
         }
 
-        private void HandleError(object sender, ErrorEventArgs e)
+        private void HandleError(string message)
         {
-            ErrorReason = e.Message;
+            ErrorReason = message;
             if (State != TransportState.Closing && State != TransportState.Closed)
             {
                 State = TransportState.Failed;
-                OnError?.Invoke(e.Message);
+                OnError?.Invoke(message);
             }
         }
 
@@ -149,7 +173,6 @@ namespace SignalRLite.Transport
             State          = TransportState.Connected;
             OnConnected?.Invoke();
 
-            // Any data after the separator in the same frame is normal traffic.
             if (!_protocol.IsBinary && sepIdx >= 0 && sepIdx + 1 < data.Length)
                 DispatchText(data.Substring(sepIdx + 1));
         }

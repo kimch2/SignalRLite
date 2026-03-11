@@ -2,9 +2,8 @@
   "name": "com.mlgame.signalrlite",
   "version": "1.0.0",
   "displayName": "SignalR Lite",
-  "description": "A lightweight ASP.NET Core SignalR client for Unity, powered by UnityWebSocket. No heavy dependencies - only requires com.psygames.unitywebsocket.",
+  "description": "A lightweight ASP.NET Core SignalR client for Unity. Zero required dependencies – pluggable WebSocket transport supports UnityWebSocket, WeChat and Douyin mini-games.",
   "unity": "2021.3",
-  "unityRelease": "45f2",
   "license": "MIT",
   "author": {
     "name": "猫脸"
@@ -20,7 +19,22 @@
     "networking",
     "webgl"
   ],
-  "dependencies": {
-    "com.psygames.unitywebsocket": "https://github.com/psygames/UnityWebSocket.git#upm"
-  }
+  "dependencies": {},
+  "samples": [
+    {
+      "displayName": "Basic Usage",
+      "description": "Minimal HubConnection example – connect, send, receive.",
+      "path": "Samples~/BasicUsage"
+    },
+    {
+      "displayName": "Transport Adapters",
+      "description": "IWebSocketClient adapters for UnityWebSocket, WeChat and Douyin mini-games.",
+      "path": "Samples~/TransportAdapters"
+    },
+    {
+      "displayName": "Device Test",
+      "description": "On-device diagnostic runner – tests basic hub operations without a test framework.",
+      "path": "Samples~/DeviceTest"
+    }
+  ]
 }

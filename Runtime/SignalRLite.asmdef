@@ -1,9 +1,7 @@
 {
     "name": "com.mlgame.signalrlite",
     "rootNamespace": "SignalRLite",
-    "references": [
-        "UnityWebSocket.Runtime"
-    ],
+    "references": [],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

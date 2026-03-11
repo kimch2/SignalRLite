@@ -220,8 +220,11 @@ namespace SignalRLite.Encoders
 
             var msg = new SignalRMessage();
 
-            if (obj.TryGetValue("type", out var typeVal))
-                msg.Type = (MessageType)Convert.ToInt32(typeVal);
+            if (obj.TryGetValue("type", out var typeVal) && typeVal != null)
+            {
+                try   { msg.Type = (MessageType)Convert.ToInt32(Convert.ToDouble(typeVal)); }
+                catch { msg.Type = MessageType.Invocation; }
+            }
 
             obj.TryGetValue("invocationId", out var invId);
             msg.InvocationId = invId as string;

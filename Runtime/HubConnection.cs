@@ -108,6 +108,7 @@ namespace SignalRLite
         private float     _lastMessageTime;
         private int       _redirectCount;
         private Coroutine _reconnectCoroutine;
+        private Coroutine _connectCoroutine;
 
         // ── Constructors ─────────────────────────────────────────────────────
 
@@ -139,22 +140,30 @@ namespace SignalRLite
             SetState(HubConnectionState.Connecting);
 
             if (Options.AuthenticationProvider != null && Options.AuthenticationProvider.IsPreAuthRequired)
-                SignalRLiteRunner.Instance.StartCoroutine(PreAuthenticate());
+                _connectCoroutine = SignalRLiteRunner.Instance.StartCoroutine(PreAuthenticate());
             else
                 ConnectInternal();
         }
 
         private IEnumerator PreAuthenticate()
         {
-            bool done  = false;
-            string err = null;
+            bool   done = false;
+            string err  = null;
 
-            Options.AuthenticationProvider.OnAuthenticationSucceeded += _ => done = true;
-            Options.AuthenticationProvider.OnAuthenticationFailed   += (_, reason) => { err = reason; done = true; };
+            OnAuthenticationSucceededDelegate onSucceeded = _ => done = true;
+            OnAuthenticationFailedDelegate    onFailed    = (_, reason) => { err = reason; done = true; };
+
+            Options.AuthenticationProvider.OnAuthenticationSucceeded += onSucceeded;
+            Options.AuthenticationProvider.OnAuthenticationFailed    += onFailed;
             Options.AuthenticationProvider.StartAuthentication();
 
-            while (!done) yield return null;
+            while (!done && _reconnectEnabled) yield return null;
 
+            Options.AuthenticationProvider.OnAuthenticationSucceeded -= onSucceeded;
+            Options.AuthenticationProvider.OnAuthenticationFailed    -= onFailed;
+            _connectCoroutine = null;
+
+            if (!_reconnectEnabled) yield break;
             if (err != null) { HandleFatalError("Pre-authentication failed: " + err); yield break; }
             ConnectInternal();
         }
@@ -169,6 +178,12 @@ namespace SignalRLite
 
             _reconnectEnabled = false;
             SignalRLiteRunner.Instance.UnregisterUpdate(OnUpdate);
+
+            if (_connectCoroutine != null)
+            {
+                SignalRLiteRunner.Instance.StopCoroutine(_connectCoroutine);
+                _connectCoroutine = null;
+            }
             if (_reconnectCoroutine != null)
             {
                 SignalRLiteRunner.Instance.StopCoroutine(_reconnectCoroutine);
@@ -181,6 +196,9 @@ namespace SignalRLite
                 _transport.Dispose();
                 _transport = null;
             }
+
+            FailPendingInvocations("Connection closed.");
+
             SetState(HubConnectionState.Disconnected);
             if (wasActive)
                 SafeInvoke(() => OnDisconnected?.Invoke(this, null));
@@ -294,6 +312,8 @@ namespace SignalRLite
         public void Off<TResult>(string target, Func<TResult> callback)                    => RemoveHandler(target, callback);
         /// <summary>Removes a specific Func handler registered with <see cref="On{T1,TResult}"/>.</summary>
         public void Off<T1, TResult>(string target, Func<T1, TResult> callback)            => RemoveHandler(target, callback);
+        /// <summary>Removes a specific Func handler registered with <see cref="On{T1,T2,TResult}"/>.</summary>
+        public void Off<T1, T2, TResult>(string target, Func<T1, T2, TResult> callback)   => RemoveHandler(target, callback);
 
         // ═════════════════════════════════════════════════════════════════════
         // Internal connection flow
@@ -306,12 +326,15 @@ namespace SignalRLite
                 ConnectWebSocket(null);
                 return;
             }
-            SignalRLiteRunner.Instance.StartCoroutine(
+            _connectCoroutine = SignalRLiteRunner.Instance.StartCoroutine(
                 NegotiationResult.Negotiate(Uri, Options.AuthenticationProvider, OnNegotiationComplete));
         }
 
         private void OnNegotiationComplete(NegotiationResult result)
         {
+            _connectCoroutine = null;
+            if (!_reconnectEnabled) return;
+
             if (!string.IsNullOrEmpty(result.Error))
             {
                 HandleFatalError("Negotiation failed: " + result.Error);
@@ -344,7 +367,9 @@ namespace SignalRLite
             Options.Protocol.GetArgTypes = target =>
             {
                 if (!_subscriptions.TryGetValue(target, out var sub)) return null;
-                return sub.Handlers.Count > 0 ? sub.Handlers[0].ParamTypes : null;
+                if (sub.Handlers.Count     > 0) return sub.Handlers[0].ParamTypes;
+                if (sub.FuncHandlers.Count > 0) return sub.FuncHandlers[0].ParamTypes;
+                return null;
             };
             Options.Protocol.GetReturnType = invId =>
             {
@@ -353,7 +378,7 @@ namespace SignalRLite
                 return null;
             };
 
-            _transport = new WebSocketTransport();
+            _transport = new WebSocketTransport(Options.WebSocketFactory);
             _transport.OnConnected    += HandleTransportConnected;
             _transport.OnDisconnected += HandleTransportDisconnected;
             _transport.OnMessages     += HandleMessages;
@@ -520,6 +545,8 @@ namespace SignalRLite
 
         private void TryReconnectOrClose(string reason)
         {
+            FailPendingInvocations(reason ?? "Disconnected.");
+
             var delay = GetReconnectDelay();
             if (_reconnectEnabled && delay.HasValue)
             {
@@ -626,6 +653,16 @@ namespace SignalRLite
         {
             if (State != HubConnectionState.Connected)
                 Debug.LogWarning($"[SignalRLite] Send/Invoke called when not connected (state={State}).");
+        }
+
+        private void FailPendingInvocations(string reason)
+        {
+            if (_invocations.Count == 0) return;
+            var pending = new List<InvocationDef>(_invocations.Values);
+            _invocations.Clear();
+            var errorMsg = new SignalRMessage { Type = MessageType.Completion, Error = reason };
+            foreach (var def in pending)
+                SafeInvoke(() => def.Callback(errorMsg));
         }
 
         private static void SafeInvoke(Action action)

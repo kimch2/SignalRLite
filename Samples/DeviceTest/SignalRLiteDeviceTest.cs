@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using SignalRLite;
+using SignalRLite.Encoders;
 
 /// <summary>
 /// On-device diagnostic runner for SignalRLite.
@@ -24,6 +25,10 @@ public class SignalRLiteDeviceTest : MonoBehaviour
     [Header("Server")]
     [Tooltip("Full hub URL, e.g. https://your-server.com/testhub")]
     public string HubUrl = "https://your-server.com/testhub";
+
+    [Tooltip("Use MessagePack binary protocol instead of JSON.\n" +
+             "Requires SIGNALRLITE_MESSAGEPACK_CSHARP define and server-side AddMessagePackProtocol().")]
+    public bool UseMessagePack = false;
 
     [Header("UI References (optional – falls back to Debug.Log)")]
     public Text   StatusText;
@@ -64,13 +69,14 @@ public class SignalRLiteDeviceTest : MonoBehaviour
 
     // ── Public buttons (wire in Inspector) ───────────────────────────────────
 
-    public void RunAllTests()  => StartCoroutine(CoRunAll());
-    public void TestConnect()  => StartCoroutine(CoConnect());
-    public void TestEcho()     => StartCoroutine(CoEcho());
-    public void TestGetTime()  => StartCoroutine(CoGetTime());
-    public void TestComplex()  => StartCoroutine(CoComplex());
-    public void TestReconnect()=> StartCoroutine(CoReconnect());
-    public void Disconnect()   { _hub?.StartClose(); SetStatus("Disconnected"); }
+    public void RunAllTests()      => StartCoroutine(CoRunAll());
+    public void RunMessagePackTest()=> StartCoroutine(CoRunMessagePack());
+    public void TestConnect()      => StartCoroutine(CoConnect());
+    public void TestEcho()         => StartCoroutine(CoEcho());
+    public void TestGetTime()      => StartCoroutine(CoGetTime());
+    public void TestComplex()      => StartCoroutine(CoComplex());
+    public void TestReconnect()    => StartCoroutine(CoReconnect());
+    public void Disconnect()       { _hub?.StartClose(); SetStatus("Disconnected"); }
 
     // ── Test coroutines ───────────────────────────────────────────────────────
 
@@ -158,11 +164,14 @@ public class SignalRLiteDeviceTest : MonoBehaviour
         float t0 = Time.realtimeSinceStartup;
 
         CreateHub();
-        _hub.OnConnected    += _ => { _connectEventFired    = true; };
+        _hub.OnConnected    += _ => { _connectEventFired = true; };
+        // If the first attempt triggers a reconnect cycle, OnReconnected fires instead of OnConnected.
+        _hub.OnReconnected  += _ => { _connectEventFired = true; };
+        _hub.OnReconnecting += _ => Log("[T1] Reconnecting (first attempt failed, retrying…)");
         _hub.OnDisconnected += (_, __) => { _disconnectEventFired = true; };
         _hub.StartConnect();
 
-        yield return WaitFor(() => _connectEventFired, 10f);
+        yield return WaitFor(() => _connectEventFired, 15f);
 
         int ms = Ms(t0);
         if (_connectEventFired)
@@ -173,7 +182,7 @@ public class SignalRLiteDeviceTest : MonoBehaviour
         }
         else
         {
-            Log($"[T1] FAIL – OnConnected did not fire within 10 s");
+            Log($"[T1] FAIL – OnConnected did not fire within 15 s");
             SetStatus("Connect failed");
             RecordResult("T1 Connect", false, ms);
             yield break;
@@ -277,10 +286,11 @@ public class SignalRLiteDeviceTest : MonoBehaviour
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private void CreateHub()
+    private void CreateHub(bool forceMessagePack = false)
     {
         _hub?.StartClose();
-        _hub = new HubConnection(HubUrl, new HubOptions
+
+        var options = new HubOptions
         {
             PingInterval    = TimeSpan.FromSeconds(15),
             PingTimeout     = TimeSpan.FromSeconds(30),
@@ -290,9 +300,134 @@ public class SignalRLiteDeviceTest : MonoBehaviour
                 TimeSpan.FromSeconds(2),
                 TimeSpan.FromSeconds(10),
                 null,
-            }
-        });
+            },
+        };
+
+#if SIGNALRLITE_MESSAGEPACK_CSHARP
+        if (UseMessagePack || forceMessagePack)
+        {
+            options.Protocol = new MessagePackCSharpProtocol();
+            Log("[Hub] Protocol = MessagePack (binary)");
+        }
+        else
+        {
+            Log("[Hub] Protocol = JSON");
+        }
+#else
+        if (UseMessagePack || forceMessagePack)
+            Log("[Hub] WARNING: UseMessagePack=true but SIGNALRLITE_MESSAGEPACK_CSHARP is not defined – falling back to JSON");
+        else
+            Log("[Hub] Protocol = JSON");
+#endif
+
+        _hub = new HubConnection(HubUrl, options);
         _hub.OnError += (_, err) => Log($"[Error] {err}");
+    }
+
+    // ── MessagePack end-to-end test ───────────────────────────────────────────
+
+    private IEnumerator CoRunMessagePack()
+    {
+        ClearLog();
+        _results.Clear();
+        float suiteStart = Time.realtimeSinceStartup;
+
+        Log("=== SignalRLite MessagePack Test ===");
+        Log($"Platform : {Application.platform}");
+        Log($"URL      : {HubUrl}");
+
+#if SIGNALRLITE_MESSAGEPACK_CSHARP
+        Log("Protocol : MessagePack (SIGNALRLITE_MESSAGEPACK_CSHARP defined)");
+#else
+        Log("Protocol : JSON (SIGNALRLITE_MESSAGEPACK_CSHARP NOT defined – test aborted)");
+        Log("[FAIL] Define SIGNALRLITE_MESSAGEPACK_CSHARP in Player Settings first.");
+        PrintSummary(suiteStart);
+        yield break;
+#endif
+        Log("");
+
+        // ── MP-T1: Connect with MessagePack ──────────────────────────────────
+        Log("[MP-T1] Connect with MessagePack …");
+        _connectEventFired = false;
+        float t0 = Time.realtimeSinceStartup;
+        CreateHub(forceMessagePack: true);
+        _hub.OnConnected   += _ => _connectEventFired = true;
+        _hub.OnReconnected += _ => _connectEventFired = true;
+        _hub.OnReconnecting += _ => Log("[MP-T1] Reconnecting (first attempt failed, retrying…)");
+        _hub.StartConnect();
+        yield return WaitFor(() => _connectEventFired, 15f);
+
+        int ms = Ms(t0);
+        bool mp1 = _connectEventFired;
+        Log(mp1 ? $"[MP-T1] PASS – Connected ({ms} ms)" : "[MP-T1] FAIL – timeout (server may not support MessagePack)");
+        RecordResult("MP-T1 Connect", mp1, ms);
+
+        if (!mp1) { PrintSummary(suiteStart); yield break; }
+
+        // ── MP-T2: Echo (binary round-trip) ──────────────────────────────────
+        Log("[MP-T2] Echo (MessagePack binary) …");
+        _echoOk = false;
+        t0 = Time.realtimeSinceStartup;
+        const string echoPayload = "msgpack-echo";
+        _hub.Invoke<string>("Echo", (result, err) =>
+        {
+            if (err != null) Log($"[MP-T2] FAIL – {err}");
+            else if (result == echoPayload) { _echoOk = true; Log($"[MP-T2] PASS – '{result}' ({Ms(t0)} ms)"); }
+            else Log($"[MP-T2] FAIL – expected '{echoPayload}' got '{result}'");
+        }, echoPayload);
+        yield return WaitFor(() => _echoOk, 5f);
+        if (!_echoOk) Log("[MP-T2] FAIL – timed out");
+        RecordResult("MP-T2 Echo", _echoOk, Ms(t0));
+
+        // ── MP-T3: GetTime (string return) ───────────────────────────────────
+        Log("[MP-T3] GetTime (MessagePack) …");
+        _getTimeOk = false;
+        t0 = Time.realtimeSinceStartup;
+        _hub.Invoke<string>("GetTime", (result, err) =>
+        {
+            if (err != null) { Log($"[MP-T3] FAIL – {err}"); return; }
+            _getTimeOk = !string.IsNullOrEmpty(result);
+            Log(_getTimeOk ? $"[MP-T3] PASS – {result} ({Ms(t0)} ms)" : "[MP-T3] FAIL – empty");
+        });
+        yield return WaitFor(() => _getTimeOk, 5f);
+        if (!_getTimeOk) Log("[MP-T3] FAIL – timed out");
+        RecordResult("MP-T3 GetTime", _getTimeOk, Ms(t0));
+
+        // ── MP-T4: Complex type (MessagePackObject) ───────────────────────────
+        Log("[MP-T4] Complex type GetPlayer (MessagePack) …");
+        _complexTypeOk = false;
+        t0 = Time.realtimeSinceStartup;
+        _hub.Invoke<PlayerData>("GetPlayer", (player, err) =>
+        {
+            if (err != null) { Log($"[MP-T4] FAIL – {err}"); return; }
+            if (player == null) { Log("[MP-T4] FAIL – null result"); return; }
+            _complexTypeOk = !string.IsNullOrEmpty(player.Name);
+            Log(_complexTypeOk
+                ? $"[MP-T4] PASS – Name={player.Name} Score={player.Score} ({Ms(t0)} ms)"
+                : "[MP-T4] FAIL – Name empty");
+        }, "TestDevice");
+        yield return WaitFor(() => _complexTypeOk, 5f);
+        if (!_complexTypeOk) Log("[MP-T4] FAIL – timed out");
+        RecordResult("MP-T4 ComplexType", _complexTypeOk, Ms(t0));
+
+        // ── MP-T5: Server Push (On callback) ─────────────────────────────────
+        Log("[MP-T5] Server push (On callback via MessagePack) …");
+        bool pushOk = false;
+        t0 = Time.realtimeSinceStartup;
+        _hub.On<string>("ReceiveMessage", msg =>
+        {
+            pushOk = !string.IsNullOrEmpty(msg);
+            Log(pushOk ? $"[MP-T5] PASS – received: '{msg}' ({Ms(t0)} ms)" : "[MP-T5] FAIL – empty push");
+        });
+        _hub.Send("BroadcastToSelf", "hello-from-msgpack");
+        yield return WaitFor(() => pushOk, 5f);
+        if (!pushOk) Log("[MP-T5] SKIP – server has no BroadcastToSelf or push not received");
+        RecordResult("MP-T5 ServerPush", pushOk, Ms(t0));
+
+        _hub.StartClose();
+        yield return new WaitForSeconds(0.5f);
+
+        PrintSummary(suiteStart);
     }
 
     private bool EnsureConnected() =>

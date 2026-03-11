@@ -1,0 +1,19 @@
+{
+    "name": "com.mlgame.signalrlite.messagepack.gamedevware",
+    "rootNamespace": "SignalRLite.Encoders",
+    "references": [
+        "com.mlgame.signalrlite",
+        "GameDevWare.Serialization"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "SIGNALRLITE_GAMEDEVWARE_MESSAGEPACK"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
